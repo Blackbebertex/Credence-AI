@@ -1,22 +1,36 @@
 # CredenceAI-Gov
 
-CredenceAI-Gov is a proposed evidence-first, advisory digital evidence platform. It organizes traceable evidence and human review; it does not issue a universal trust score, a real/fake verdict, or an autonomous enforcement action.
+CredenceAI-Gov is an evidence-first, advisory digital evidence platform prototype. It organizes traceable evidence and human review; it does not issue a universal trust score, a real/fake verdict, or an autonomous enforcement action.
 
 ## Current status
 
-This checkout contains the product blueprint, a draft requirements baseline, and a P0 foundation proposal. No application feature is currently implemented or validated. P0 is synthetic-data-only. Do not use it with real or sensitive evidence.
+This checkout contains the product blueprint and a synthetic-only local prototype. Its dashboard connects to the local case and artifact endpoints for case listing, case creation, and evidence upload. Analytical charts, provenance relationships, integrity outcomes, activity, and review queue use clearly labeled deterministic illustrative fixtures because corresponding API workflows are not implemented. Do not use it with real or sensitive evidence.
 
 See [master development prompt](docs/MASTER_PROMPT.md), [requirements](docs/requirements/implementation-spec.md), [architecture](docs/architecture/architecture.md), [assumptions](docs/ASSUMPTIONS.md), and [threat model](docs/THREAT_MODEL.md).
 
 ## Prerequisites
 
-- Docker Desktop with its Linux engine running and accessible to the current user.
-- Git repository metadata for contribution history and CI provenance.
-- After P0: Python 3.12, Node 22, and package tooling pinned in project lockfiles.
+- Python 3.12 or newer.
+- Git repository metadata is recommended for contribution history and CI provenance.
+
+## Dockerless local API demo
+
+The current checkout has no frontend or application service in Docker Compose. To run the dashboard and synthetic API together without Docker, install the Python project and start its loopback-only development server:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+python -m backend.credence_gov.dev_server
+```
+
+Open `http://127.0.0.1:8000` for the browser dashboard or `http://127.0.0.1:8000/docs` for the API. The dashboard receives an ephemeral analyst token from a development-only endpoint available to loopback clients; the token expires after 15 minutes and is not printed. Cases and artifacts use in-memory stores and disappear when the server stops. This is a local synthetic demo, not a durable application or a substitute for the approved identity, database, object storage, malware scanning, and worker services.
+
+Stop the server with `Ctrl+C`.
 
 ## P0 checkpoint
 
-The intended local P0 commands are `docker compose --profile dev up -d --wait` and `make licences`. They have not been verified in this environment: the Docker client cannot access the Docker Desktop engine pipe, and this workspace is not currently a Git repository. Dependency image digests and license allowlist remain pending.
+`docker compose --profile dev up -d --wait` remains an optional infrastructure stack for local development. The Dockerless API demo above does not require it. Dependency image digests and license allowlist remain pending.
 
 ## Safety boundary
 
