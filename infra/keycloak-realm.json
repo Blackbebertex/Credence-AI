@@ -1,0 +1,38 @@
+{
+  "realm": "credence-dev",
+  "enabled": true,
+  "displayName": "CredenceAI-Gov SIMULATED development",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "bruteForceProtected": true,
+  "requiredActions": [
+    { "alias": "CONFIGURE_TOTP", "name": "Configure OTP", "providerId": "CONFIGURE_TOTP", "enabled": true, "defaultAction": true, "priority": 10 }
+  ],
+  "roles": {
+    "realm": [
+      { "name": "analyst" },
+      { "name": "reviewer" },
+      { "name": "supervisor" },
+      { "name": "admin" },
+      { "name": "auditor" },
+      { "name": "service" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "credence-api",
+      "name": "CredenceAI-Gov local API",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:5173"]
+    }
+  ],
+  "users": []
+}

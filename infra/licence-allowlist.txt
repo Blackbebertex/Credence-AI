@@ -1,0 +1,2 @@
+# P0 is blocked until this allowlist is reviewed and dependency scanners are configured.
+# Format: SPDX license identifier | package/component | review rationale

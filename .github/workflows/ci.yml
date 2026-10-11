@@ -1,0 +1,22 @@
+name: P0 foundation
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check foundation files
+        shell: bash
+        run: |
+          test -f README.md
+          test -f docs/ASSUMPTIONS.md
+          test -f docs/THREAT_MODEL.md
+          test -f docs/COMPLIANCE_REGISTER.md
+          test -f infra/licence-allowlist.txt
