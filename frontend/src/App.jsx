@@ -101,7 +101,11 @@ export default function App() {
       let errDetail = `Error ${res.status}`;
       try {
         const data = await res.json();
-        errDetail = data.detail || data.title || errDetail;
+        if (data.missing_preconditions && Array.isArray(data.missing_preconditions)) {
+          errDetail = `${data.detail || 'Preconditions not met'}: ${data.missing_preconditions.join('; ')}`;
+        } else {
+          errDetail = data.detail || data.title || errDetail;
+        }
       } catch {}
       throw new Error(errDetail);
     }
@@ -317,10 +321,18 @@ export default function App() {
   // Action: Run Cryptographic Integrity Scan
   const handleRunIntegrityScan = async (caseId) => {
     try {
+      showToast('Computing SHA-256 byte digests and verifying custody chain...', 'info');
       const res = await apiFetch(`/api/v1/cases/${caseId}/integrity-scan`);
       const report = await res.json();
       setIntegrityScan(report);
-      showToast(report.is_intact ? 'Chain-of-Custody Integrity 100% verified!' : 'Alert: Integrity issues detected', report.is_intact ? 'success' : 'error');
+      if (report.is_intact) {
+        showToast('Integrity verified: Artifact hashes and custody chain match.', 'success');
+      } else {
+        const msg = report.failure_reasons?.length
+          ? `Integrity alert: ${report.failure_reasons.join(', ')}`
+          : `Integrity check failed: ${report.error_code || 'tamper detected'}`;
+        showToast(msg, 'error');
+      }
     } catch (err) {
       showToast(`Integrity scan failed: ${err.message}`, 'error');
     }
@@ -329,6 +341,7 @@ export default function App() {
   // Action: Generate BSA 2023 Section 63 Electronic Certificate
   const handleGenerateBsaCert = async (caseId) => {
     try {
+      showToast('Validating statutory preconditions under BSA s.63...', 'info');
       const res = await apiFetch(`/api/v1/cases/${caseId}/bsa-certificate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -337,13 +350,15 @@ export default function App() {
           deponent_designation: 'Senior Evidence Analyst & System Custodian',
           department: 'Directorate of Digital Assurance & Governance',
           device_identifier: 'CREDENCE-GOV-SECURE-NODE-01',
+          affirmation_acknowledged: true,
+          admissibility_disclaimer_acknowledged: true,
         }),
       });
       const cert = await res.json();
       setBsaCertificate(cert);
-      showToast('BSA 2023 Section 63 Certificate generated & hashed!', 'success');
+      showToast('BSA 2023 s.63 Certificate generated & hashed!', 'success');
     } catch (err) {
-      showToast(`Certificate generation failed: ${err.message}`, 'error');
+      showToast(`Certificate generation blocked: ${err.message}`, 'error');
     }
   };
 
@@ -506,12 +521,12 @@ export default function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <Shield size={16} color="var(--cyan)" />
             <span>
-              <strong>Bharatiya Sakshya Adhiniyam, 2023 (Section 63)</strong> — Electronic Evidence Custody & Integrity Assurance Ledger. <span className="highlight">Advisory Decision Support. Not a Finding of Fact.</span>
+              <strong>Bharatiya Sakshya Adhiniyam, 2023 (Section 63)</strong> — Electronic Evidence Custody & Integrity Assurance Ledger. <span className="highlight">Advisory Decision Support. Not a Finding of Fact. Supports admissibility subject to judicial determination.</span>
             </span>
           </div>
           <div className="banner-tags">
-            <span className="tag tag-statutory">BSA 2023 COMPLIANT</span>
-            <span className="tag tag-live">{connected ? 'LIVE BACKEND' : 'LOCAL SIMULATED'}</span>
+            <span className="tag tag-statutory">BSA s.63 ADMISSIBILITY SUPPORT</span>
+            <span className="tag tag-live">{connected ? 'LIVE BACKEND' : 'BACKEND UNREACHABLE'}</span>
           </div>
         </section>
 
@@ -536,8 +551,8 @@ export default function App() {
           <div className="kpi-card green">
             <div className="kpi-icon-wrap"><Lock size={20} /></div>
             <div className="kpi-content">
-              <strong>100%</strong>
-              <small>SHA-256 Consistency</small>
+              <strong>{artifacts.length > 0 ? `${artifacts.length} Active` : '0 Active'}</strong>
+              <small>Byte Continuity Monitored</small>
             </div>
           </div>
 
@@ -569,19 +584,19 @@ export default function App() {
                   <span className="tag tag-live">SHA-256</span>
                 </div>
                 <div style={{ padding: '20px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '32px', fontWeight: '800', color: 'var(--green)', letterSpacing: '-0.5px' }}>
-                    100.0%
+                  <div style={{ fontSize: '24px', fontWeight: '800', color: 'var(--green)', letterSpacing: '-0.5px' }}>
+                    {artifacts.length > 0 ? `${artifacts.length} Artifacts Sealed` : 'Awaiting Ingestion'}
                   </div>
-                  <p style={{ color: 'var(--muted)', fontSize: '11px', marginTop: '4px' }}>
-                    Immutable Object Lock Verified
+                  <p style={{ color: 'var(--muted)', fontSize: '11px', marginTop: '6px' }}>
+                    Trust starts at ingestion. Hashes prove byte continuity post-upload only.
                   </p>
                   <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: '#0a0d18', borderRadius: '8px', fontSize: '11px' }}>
                     <span style={{ color: 'var(--text-secondary)' }}>Storage Engine:</span>
                     <span style={{ color: 'var(--cyan)', fontFamily: 'var(--font-mono)' }}>S3/Local ObjectLock</span>
                   </div>
                   <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: '#0a0d18', borderRadius: '8px', fontSize: '11px' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>Ledger Chaining:</span>
-                    <span style={{ color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>Merkle SHA-256</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>Custody Chaining:</span>
+                    <span style={{ color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>SHA-256 Merkle Link</span>
                   </div>
                 </div>
               </section>
@@ -1225,15 +1240,66 @@ export default function App() {
 
               {/* Integrity Report View */}
               {integrityScan && (
-                <div style={{ background: '#0a1d17', border: '1px solid #1c523c', borderRadius: '8px', padding: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--green)', fontWeight: '700' }}>
-                    <CheckCircle2 size={16} /> Cryptographic Integrity Verified Intact
+                <div style={{ background: integrityScan.is_intact ? '#0a1d17' : '#221115', border: `1px solid ${integrityScan.is_intact ? '#1c523c' : '#6b202a'}`, borderRadius: '8px', padding: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: integrityScan.is_intact ? 'var(--green)' : '#ff6b7d', fontWeight: '700' }}>
+                    {integrityScan.is_intact ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                    {integrityScan.is_intact ? 'Cryptographic Integrity Verified' : `Integrity Issues Detected (${integrityScan.error_code || 'FLAGGED'})`}
                   </div>
-                  <p style={{ fontSize: '11px', color: '#c3ecd7', marginTop: '4px' }}>
-                    Algorithm: SHA-256 · {integrityScan.valid_artifacts} of {integrityScan.total_artifacts} artifacts validated with exact matches.
+                  <p style={{ fontSize: '11px', color: integrityScan.is_intact ? '#c3ecd7' : '#ffd5da', marginTop: '4px' }}>
+                    {integrityScan.valid_artifacts} of {integrityScan.total_artifacts} artifacts verified against storage bytes.
                   </p>
+                  
+                  {/* Detailed 4-Point Check Status */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginTop: '10px' }}>
+                    <div style={{ padding: '6px 8px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', fontSize: '10px', textAlign: 'center' }}>
+                      <span style={{ color: 'var(--muted)', display: 'block' }}>Byte Match</span>
+                      <strong style={{ color: integrityScan.hash_match ? 'var(--green)' : '#ff6b7d' }}>
+                        {integrityScan.hash_match ? 'PASS' : 'FAIL'}
+                      </strong>
+                    </div>
+                    <div style={{ padding: '6px 8px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', fontSize: '10px', textAlign: 'center' }}>
+                      <span style={{ color: 'var(--muted)', display: 'block' }}>Custody Chain</span>
+                      <strong style={{ color: integrityScan.chain_valid ? 'var(--green)' : '#ff6b7d' }}>
+                        {integrityScan.chain_valid ? 'PASS' : 'FAIL'}
+                      </strong>
+                    </div>
+                    <div style={{ padding: '6px 8px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', fontSize: '10px', textAlign: 'center' }}>
+                      <span style={{ color: 'var(--muted)', display: 'block' }}>Signature</span>
+                      <strong style={{ color: integrityScan.signature_valid ? 'var(--green)' : '#ff6b7d' }}>
+                        {integrityScan.signature_valid ? 'PASS' : 'FAIL'}
+                      </strong>
+                    </div>
+                    <div style={{ padding: '6px 8px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', fontSize: '10px', textAlign: 'center' }}>
+                      <span style={{ color: 'var(--muted)', display: 'block' }}>Timestamps</span>
+                      <strong style={{ color: integrityScan.timestamp_valid ? 'var(--green)' : '#ff6b7d' }}>
+                        {integrityScan.timestamp_valid ? 'PASS' : 'FAIL'}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {integrityScan.failure_reasons?.length > 0 && (
+                    <div style={{ marginTop: '8px', padding: '8px', background: 'rgba(255,0,0,0.1)', borderRadius: '4px', fontSize: '11px', color: '#ff8a98' }}>
+                      <strong>Failure Reasons:</strong>
+                      <ul style={{ paddingLeft: '16px', marginTop: '4px' }}>
+                        {integrityScan.failure_reasons.map((r, i) => (
+                          <li key={i}>{r}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
+
+              {/* Independent Offline Verifier Hint */}
+              <div style={{ padding: '10px 12px', background: '#080c16', border: '1px dashed var(--border)', borderRadius: '6px', fontSize: '11px' }}>
+                <span style={{ color: 'var(--cyan)', fontWeight: '600' }}>Independent Offline Verification (P1-05):</span>
+                <p style={{ color: 'var(--muted)', marginTop: '2px' }}>
+                  Anyone can verify exported dossiers without server trust:
+                  <code style={{ display: 'block', marginTop: '4px', color: '#c9d1d9', background: '#020408', padding: '4px 8px', borderRadius: '4px', fontFamily: 'var(--font-mono)' }}>
+                    python scripts/verifier.py evidence_dossier_{selectedCase.id}.zip
+                  </code>
+                </p>
+              </div>
 
               {/* BSA Certificate View */}
               {bsaCertificate && (

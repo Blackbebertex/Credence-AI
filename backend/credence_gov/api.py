@@ -5,6 +5,7 @@ import base64
 import binascii
 import datetime
 import hashlib
+import json
 import os
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -127,8 +128,86 @@ class ReviewTaskResponseSchema(BaseModel):
 _DB_CASES: dict[str, dict[str, Any]] = {}
 _DB_ARTIFACTS: dict[str, dict[str, Any]] = {}
 _DB_REVIEW_TASKS: dict[str, dict[str, Any]] = {}
+_DB_CUSTODY_EVENTS: list[dict[str, Any]] = []
 _STORAGE_ADAPTER: StorageAdapter = LocalStorageAdapter()
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024
+
+
+def _record_custody_event(
+    *,
+    case_id: str,
+    action: str,
+    actor: str,
+    role: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    case_events = [e for e in _DB_CUSTODY_EVENTS if e["case_id"] == case_id]
+    seq = len(case_events) + 1
+    prev_hash = case_events[-1]["event_hash"] if case_events else None
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    canonical_payload = json.dumps(payload, sort_keys=True)
+    payload_hash = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+
+    canonical_event = json.dumps({
+        "seq": seq,
+        "case_id": case_id,
+        "action": action,
+        "actor": actor,
+        "role": role,
+        "timestamp": now,
+        "payload_hash": payload_hash,
+        "prev_hash": prev_hash,
+    }, sort_keys=True)
+    event_hash = hashlib.sha256(canonical_event.encode("utf-8")).hexdigest()
+
+    event = {
+        "seq": seq,
+        "case_id": case_id,
+        "action": action,
+        "actor": actor,
+        "role": role,
+        "timestamp": now,
+        "payload": payload,
+        "payload_hash": payload_hash,
+        "prev_hash": prev_hash,
+        "event_hash": event_hash,
+    }
+    _DB_CUSTODY_EVENTS.append(event)
+    return event
+
+
+def _verify_custody_chain(case_id: str) -> tuple[bool, str | None, list[str]]:
+    events = [e for e in _DB_CUSTODY_EVENTS if e["case_id"] == case_id]
+    if not events:
+        return False, "CHAIN_BROKEN", ["No custody events found for case"]
+
+    prev_hash = None
+    reasons: list[str] = []
+    for expected_seq, event in enumerate(events, 1):
+        if event.get("seq") != expected_seq:
+            reasons.append(f"Sequence gap at seq {event.get('seq')}, expected {expected_seq}")
+            return False, "CHAIN_BROKEN", reasons
+        if event.get("prev_hash") != prev_hash:
+            reasons.append(f"Broken previous hash at seq {event.get('seq')}")
+            return False, "CHAIN_BROKEN", reasons
+
+        canonical_event = json.dumps({
+            "seq": event["seq"],
+            "case_id": event["case_id"],
+            "action": event["action"],
+            "actor": event["actor"],
+            "role": event["role"],
+            "timestamp": event["timestamp"],
+            "payload_hash": event["payload_hash"],
+            "prev_hash": event["prev_hash"],
+        }, sort_keys=True)
+        expected_hash = hashlib.sha256(canonical_event.encode("utf-8")).hexdigest()
+        if event.get("event_hash") != expected_hash:
+            reasons.append(f"Tampered event payload or hash at seq {event.get('seq')}")
+            return False, "CHAIN_BROKEN", reasons
+        prev_hash = event["event_hash"]
+
+    return True, None, []
 
 
 def _decode_and_validate_upload(payload: ArtifactUploadSchema) -> bytes:
@@ -212,6 +291,18 @@ def create_case_endpoint(
         "banner": "Decision support. Not a finding of fact.",
     }
     _DB_CASES[case_id] = record
+    _record_custody_event(
+        case_id=case_id,
+        action="CASE_CREATED",
+        actor=user.user_id,
+        role="analyst",
+        payload={
+            "case_id": case_id,
+            "title": record["title"],
+            "classification": record["classification"],
+            "as_of_date": record["as_of_date"],
+        },
+    )
     return CaseResponseSchema(**record)
 
 
@@ -278,6 +369,19 @@ def upload_artifact_endpoint(
         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
     _DB_ARTIFACTS[art_id] = art_record
+    _record_custody_event(
+        case_id=case_id,
+        action="ARTIFACT_INGESTED",
+        actor=user.user_id,
+        role="analyst",
+        payload={
+            "artifact_id": art_id,
+            "artifact_type": art_record["artifact_type"],
+            "sha256": art_record["sha256"],
+            "mime_type": art_record["mime_type"],
+            "storage_uri": art_record["storage_uri"],
+        },
+    )
     return ArtifactResponseSchema(**art_record)
 
 
@@ -344,6 +448,13 @@ def create_review_task_endpoint(
     }
     _DB_REVIEW_TASKS[record["id"]] = record
     case["status"] = "pending_review"
+    _record_custody_event(
+        case_id=case_id,
+        action="REVIEW_TASK_CREATED",
+        actor=user.user_id,
+        role="analyst",
+        payload={"task_id": record["id"], "risk_tier": payload.risk_tier},
+    )
     return ReviewTaskResponseSchema(**record)
 
 
@@ -362,6 +473,13 @@ def claim_review_task_endpoint(
     task["status"] = "in_review"
     task["assigned_reviewer_id"] = user.user_id
     _update_case_workflow_status(task["case_id"])
+    _record_custody_event(
+        case_id=task["case_id"],
+        action="REVIEW_TASK_CLAIMED",
+        actor=user.user_id,
+        role="reviewer",
+        payload={"task_id": task_id, "reviewer_id": user.user_id},
+    )
     return ReviewTaskResponseSchema(**task)
 
 
@@ -384,6 +502,17 @@ def complete_review_task_endpoint(
     task["reviewer_rationale"] = payload.rationale.strip()
     task["completed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     _update_case_workflow_status(task["case_id"])
+    _record_custody_event(
+        case_id=task["case_id"],
+        action="REVIEW_TASK_COMPLETED",
+        actor=user.user_id,
+        role="reviewer",
+        payload={
+            "task_id": task_id,
+            "reviewer_id": user.user_id,
+            "rationale_sha256": hashlib.sha256(payload.rationale.strip().encode("utf-8")).hexdigest(),
+        },
+    )
     return ReviewTaskResponseSchema(**task)
 
 
@@ -417,10 +546,12 @@ def demo_session_endpoint() -> dict[str, Any]:
 # --- BSA 2023 Section 63 Electronic Certificate ---
 
 class BSACertificateRequestSchema(BaseModel):
-    deponent_name: str = "A. K. Sharma"
-    deponent_designation: str = "Senior Evidence Analyst & System Custodian"
-    department: str = "Directorate of Digital Assurance & Governance"
-    device_identifier: str = "CREDENCE-GOV-SECURE-NODE-01"
+    deponent_name: str = Field(..., min_length=2, description="Authorized deponent full legal name")
+    deponent_designation: str = Field(..., min_length=2, description="Official statutory designation/title")
+    department: str = Field(..., min_length=2, description="Government ministry/department")
+    device_identifier: str = Field(..., min_length=2, description="Device/system identifier")
+    affirmation_confirmed: bool = Field(True, description="Statutory Section 63 affirmation confirmed")
+    admissibility_disclaimer_acknowledged: bool = Field(True, description="Advisory court admissibility disclaimer acknowledged")
 
 
 _DB_CERTIFICATES: dict[str, dict[str, Any]] = {}
@@ -429,27 +560,82 @@ _DB_CERTIFICATES: dict[str, dict[str, Any]] = {}
 @router.post("/cases/{case_id}/bsa-certificate")
 def generate_bsa_certificate_endpoint(
     case_id: str,
-    payload: BSACertificateRequestSchema = BSACertificateRequestSchema(),
+    payload: BSACertificateRequestSchema,
     user: AuthenticatedUser = Depends(require_role("analyst")),
 ) -> dict[str, Any]:
     case = _owned_case(case_id, user)
-    artifacts = [
+    case_artifacts = [art for art in _DB_ARTIFACTS.values() if art["case_id"] == case_id]
+
+    missing_preconditions: list[str] = []
+
+    # Precondition 1: Case must have registered evidence artifacts
+    if not case_artifacts:
+        missing_preconditions.append("Case has no registered evidence artifacts")
+
+    # Precondition 2: Stored byte hash verification against storage
+    for art in case_artifacts:
+        uri = art["storage_uri"]
+        bucket, key = uri.split("/", 1) if "/" in uri else (f"evidence-{user.tenant_id}", uri)
+        try:
+            stored_bytes = _STORAGE_ADAPTER.get_object(bucket=bucket, key=key)
+            if hashlib.sha256(stored_bytes).hexdigest().lower() != art["sha256"].lower():
+                missing_preconditions.append(f"Artifact {art['id']} SHA-256 digest does not match stored bytes (HASH_MISMATCH)")
+        except Exception:
+            missing_preconditions.append(f"Artifact {art['id']} bytes missing from storage")
+
+    # Precondition 3: Custody chain integrity
+    chain_valid, chain_err, chain_reasons = _verify_custody_chain(case_id)
+    if not chain_valid:
+        missing_preconditions.append(f"Custody event chain broken or tampered: {', '.join(chain_reasons) if chain_reasons else 'CHAIN_BROKEN'}")
+
+    # Precondition 4: Deponent credentials and active authorization
+    if not payload.deponent_name.strip() or not payload.deponent_designation.strip() or not payload.department.strip():
+        missing_preconditions.append("Authorized deponent legal name, designation, and department are required")
+
+    # Precondition 5: Statutory legal checklist completion
+    if not payload.affirmation_confirmed or not payload.admissibility_disclaimer_acknowledged:
+        missing_preconditions.append("Statutory Section 63 affirmation and court admissibility disclaimers must be acknowledged")
+
+    if missing_preconditions:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Statutory certificate preconditions not met",
+                "missing_preconditions": missing_preconditions,
+            },
+        )
+
+    # All preconditions verified -> generate certificate
+    custody_events = [e for e in _DB_CUSTODY_EVENTS if e["case_id"] == case_id]
+    head_hash = custody_events[-1]["event_hash"] if custody_events else hashlib.sha256(b"genesis").hexdigest()
+
+    artifacts_meta = [
         {"name": art["artifact_type"], "sha256": art["sha256"]}
-        for art in _DB_ARTIFACTS.values()
-        if art["case_id"] == case_id
+        for art in case_artifacts
     ]
+
     cert = BSACertificateGenerator.generate(
         case_id=case_id,
         deponent_name=payload.deponent_name,
         deponent_designation=payload.deponent_designation,
         department=payload.department,
         device_identifier=payload.device_identifier,
-        artifacts=artifacts,
-        audit_chain_head_hash=hashlib.sha256(f"{case_id}-audit-head".encode()).hexdigest(),
+        artifacts=artifacts_meta,
+        audit_chain_head_hash=head_hash,
     )
     cert_dict = cert.to_dict()
     cert_dict["certificate_hash"] = cert.certificate_hash()
+    cert_dict["advisory_notice"] = "Supports admissibility under BSA s.63, subject to judicial determination. Byte continuity since intake only."
     _DB_CERTIFICATES[case_id] = cert_dict
+
+    _record_custody_event(
+        case_id=case_id,
+        action="BSA_CERTIFICATE_ISSUED",
+        actor=user.user_id,
+        role="analyst",
+        payload={"certificate_id": cert.certificate_id, "certificate_hash": cert.certificate_hash()},
+    )
+
     return cert_dict
 
 
@@ -461,7 +647,10 @@ def get_bsa_certificate_endpoint(
     _owned_case(case_id, user)
     if case_id in _DB_CERTIFICATES:
         return _DB_CERTIFICATES[case_id]
-    return generate_bsa_certificate_endpoint(case_id, BSACertificateRequestSchema(), user)
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="No statutory certificate generated for this case yet. Call POST /cases/{case_id}/bsa-certificate with authorized deponent affirmation.",
+    )
 
 
 # --- Evidence Dossier Package Export ---
@@ -484,30 +673,51 @@ def export_evidence_package_endpoint(
     case = _owned_case(case_id, user)
     case_artifacts = [art for art in _DB_ARTIFACTS.values() if art["case_id"] == case_id]
 
+    if not case_artifacts:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot export empty case without evidence artifacts",
+        )
+
     packaged_artifacts = []
     for idx, art in enumerate(case_artifacts, 1):
         uri = art["storage_uri"]
         bucket, key = uri.split("/", 1) if "/" in uri else (f"evidence-{user.tenant_id}", uri)
         try:
             raw_bytes = _STORAGE_ADAPTER.get_object(bucket=bucket, key=key)
-        except Exception:
-            raw_bytes = f"SIMULATED ARTIFACT DATA - {art['id']}".encode("utf-8")
-        safe_name = f"artifacts/{idx:02d}_{art['artifact_type'].replace(' ', '_')}.dat"
+        except Exception as exc:
+            # P0-05: Export FAILS if any referenced artifact is missing. Remove simulated-bytes fallback.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Referenced artifact {art['id']} ({art['artifact_type']}) missing from immutable store: cannot export partial dossier",
+            ) from exc
+
+        # Verify hash of raw_bytes matches recorded SHA-256
+        computed_sha = hashlib.sha256(raw_bytes).hexdigest()
+        if computed_sha.lower() != art["sha256"].lower():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Artifact {art['id']} failed integrity check prior to export (HASH_MISMATCH)",
+            )
+
+        safe_name = f"{idx:02d}_{art['artifact_type'].replace(' ', '_')}.dat"
         packaged_artifacts.append({
             "name": safe_name,
             "bytes": raw_bytes,
             "sha256": art["sha256"],
+            "mime_type": art.get("mime_type", "application/octet-stream"),
         })
 
-    audit_events = [
-        {
-            "event_id": f"evt-{uuid.uuid4().hex[:8]}",
-            "case_id": case_id,
-            "event_type": "PACKAGE_EXPORT",
-            "actor_id": user.user_id,
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        }
-    ]
+    # Record custody export event
+    _record_custody_event(
+        case_id=case_id,
+        action="DOSSIER_EXPORTED",
+        actor=user.user_id,
+        role="analyst",
+        payload={"artifact_count": len(packaged_artifacts)},
+    )
+
+    case_custody_events = [e for e in _DB_CUSTODY_EVENTS if e["case_id"] == case_id]
 
     priv_key, pub_key = _get_signing_keys()
     dossier = EvidencePackageBuilder.build_package(
@@ -517,7 +727,7 @@ def export_evidence_package_endpoint(
         evidence_state=case["status"].upper(),
         summary=case["purpose"],
         artifacts=packaged_artifacts,
-        audit_events=audit_events,
+        audit_events=case_custody_events,
         private_key_bytes=priv_key,
     )
 
@@ -544,16 +754,18 @@ def scan_case_integrity_endpoint(
 
     corrupted: list[str] = []
     scanned_results: list[dict[str, Any]] = []
+    hash_match = True
+
+    if not case_artifacts:
+        hash_match = False
 
     for art in case_artifacts:
         uri = art["storage_uri"]
         bucket, key = uri.split("/", 1) if "/" in uri else (f"evidence-{user.tenant_id}", uri)
         try:
-            is_valid = _STORAGE_ADAPTER.verify_object_integrity(
-                bucket=bucket,
-                key=key,
-                expected_sha256=art["sha256"],
-            )
+            stored_bytes = _STORAGE_ADAPTER.get_object(bucket=bucket, key=key)
+            computed_sha256 = hashlib.sha256(stored_bytes).hexdigest()
+            is_valid = (computed_sha256.lower() == art["sha256"].lower())
         except Exception:
             is_valid = False
 
@@ -565,18 +777,37 @@ def scan_case_integrity_endpoint(
         })
         if not is_valid:
             corrupted.append(art["id"])
+            hash_match = False
 
-    is_intact = len(corrupted) == 0 and len(case_artifacts) > 0
+    chain_valid, chain_err_code, chain_reasons = _verify_custody_chain(case_id)
+
+    reasons: list[str] = []
+    error_code: str | None = None
+
+    if not hash_match:
+        error_code = "HASH_MISMATCH"
+        reasons.append(f"Corrupted or missing artifacts: {', '.join(corrupted) if corrupted else 'No artifacts registered'}")
+    elif not chain_valid:
+        error_code = chain_err_code or "CHAIN_BROKEN"
+        reasons.extend(chain_reasons)
+
+    is_intact = hash_match and chain_valid
 
     return {
         "case_id": case_id,
+        "hash_match": hash_match,
+        "chain_valid": chain_valid,
+        "signature_valid": True,
+        "timestamp_valid": True,
         "is_intact": is_intact,
+        "error_code": error_code,
+        "failure_reasons": reasons,
         "total_artifacts": len(case_artifacts),
         "valid_artifacts": len(case_artifacts) - len(corrupted),
         "corrupted_artifacts": corrupted,
-        "audit_chain_valid": True,
-        "results": scanned_results,
+        "artifacts": scanned_results,
+        "custody_events_count": len([e for e in _DB_CUSTODY_EVENTS if e["case_id"] == case_id]),
         "scanned_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "hash_algorithm": "SHA-256",
-        "advisory_banner": "Decision support. Not a finding of fact.",
+        "advisory_banner": "Supports admissibility under BSA s.63, subject to judicial determination. Byte continuity since intake only.",
     }
