@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: credence-gov-backend
+    runtime: python
+    buildCommand: "pip install -r requirements.txt && pip install -e ."
+    startCommand: "uvicorn backend.credence_gov.app:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CORS_ALLOWED_ORIGINS
+        value: "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
+      - key: CORS_ALLOW_ORIGIN_REGEX
+        value: "https://.*\\.vercel\\.app"
+      - key: MAX_UPLOAD_MB
+        value: "10"
+      - key: APP_ENV
+        value: "production"
+    healthCheckPath: /health

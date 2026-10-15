@@ -22,12 +22,14 @@ def create_app(*, dev_token: str | None = None) -> FastAPI:
     ]
     if "*" in allowed_origins:
         raise ValueError("CORS_ALLOWED_ORIGINS must list explicit origins")
+    cors_origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX", r"https://.*\.vercel\.app|http://localhost:\d+|http://127\.0\.0\.1:\d+")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
+        allow_origin_regex=cors_origin_regex,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_methods=["GET", "POST", "OPTIONS", "PUT", "DELETE", "PATCH"],
+        allow_headers=["Authorization", "Content-Type", "Accept"],
     )
 
     @app.get("/", include_in_schema=False)
