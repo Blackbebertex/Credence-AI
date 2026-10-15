@@ -1,0 +1,21 @@
+name: Render Backend Keep-Alive
+
+on:
+  schedule:
+    # Runs every 14 minutes (Render free tier sleeps after 15 minutes of inactivity)
+    - cron: '*/14 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render Backend Health Endpoint
+        run: |
+          RENDER_URL="${{ vars.RENDER_BACKEND_URL }}"
+          if [ -z "$RENDER_URL" ]; then
+            echo "RENDER_BACKEND_URL variable not set. Please add it to GitHub Repo -> Settings -> Secrets and variables -> Actions -> Variables."
+            exit 0
+          fi
+          echo "Pinging ${RENDER_URL}/health..."
+          curl -s -f -m 30 "${RENDER_URL%/}/health" || curl -s -m 60 "${RENDER_URL%/}/health" || echo "Ping attempted."
