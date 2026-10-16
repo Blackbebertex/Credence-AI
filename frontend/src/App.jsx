@@ -1040,6 +1040,126 @@ export default function App() {
             </div>
           </section>
         )}
+
+        {/* 7. Provenance Graph Full View */}
+        {activeTab === 'provenance' && (
+          <section className="panel" style={{ marginTop: '10px' }}>
+            <div className="panel-header">
+              <div className="panel-title">
+                <Activity size={15} color="var(--purple)" /> Evidence Provenance Graph · Cryptographic & Custody Lineage
+              </div>
+              <div className="panel-actions">
+                <span style={{ fontSize: '11px', color: 'var(--muted)' }}>Click any node to inspect cryptographic lineage & Merkle chain integrity</span>
+              </div>
+            </div>
+
+            <div className="graph-container" style={{ padding: '24px' }}>
+              <svg className="graph-svg" viewBox="0 0 600 360" style={{ maxHeight: '420px' }}>
+                <defs>
+                  <linearGradient id="edgeGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#3d5afe" stopOpacity="0.8" />
+                    <stop offset="100%" stopColor="#39c9df" stopOpacity="0.8" />
+                  </linearGradient>
+                  <filter id="nodeGlow2">
+                    <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+                    <feMerge>
+                      <feMergeNode in="coloredBlur"/>
+                      <feMergeNode in="SourceGraphic"/>
+                    </feMerge>
+                  </filter>
+                </defs>
+
+                {/* Connecting Edges */}
+                <g stroke="url(#edgeGrad2)" strokeWidth="2" fill="none" opacity="0.65">
+                  <path d="M 100 180 Q 180 100 260 90" strokeDasharray="3 3" />
+                  <path d="M 100 180 Q 180 260 260 270" strokeDasharray="3 3" />
+                  <path d="M 260 90 Q 330 140 400 180" />
+                  <path d="M 260 270 Q 330 220 400 180" />
+                  <path d="M 400 180 Q 460 120 520 100" stroke="#b078ff" />
+                  <path d="M 400 180 Q 460 240 520 260" stroke="#22c989" />
+                </g>
+
+                {/* Nodes */}
+                <g
+                  className={`graph-node ${selectedGraphNode === 'case' ? 'active' : ''}`}
+                  onClick={() => setSelectedGraphNode('case')}
+                >
+                  <circle cx="100" cy="180" r="30" fill="#141c38" stroke="var(--blue)" strokeWidth="2.5" filter="url(#nodeGlow2)" />
+                  <text x="100" y="177" textAnchor="middle" fill="#fff" fontWeight="700">CASE</text>
+                  <text x="100" y="191" textAnchor="middle" fill="#8da8ff" fontSize="9">ROOT</text>
+                </g>
+
+                <g
+                  className={`graph-node ${selectedGraphNode === 'pdf' ? 'active' : ''}`}
+                  onClick={() => setSelectedGraphNode('pdf')}
+                >
+                  <circle cx="260" cy="90" r="24" fill="#0f2631" stroke="var(--cyan)" strokeWidth="2" />
+                  <text x="260" y="87" textAnchor="middle" fill="#fff" fontWeight="600">PDF</text>
+                  <text x="260" y="100" textAnchor="middle" fill="#7ce4f3" fontSize="8">DOC</text>
+                </g>
+
+                <g
+                  className={`graph-node ${selectedGraphNode === 'image' ? 'active' : ''}`}
+                  onClick={() => setSelectedGraphNode('image')}
+                >
+                  <circle cx="260" cy="270" r="24" fill="#241a38" stroke="var(--purple)" strokeWidth="2" />
+                  <text x="260" y="267" textAnchor="middle" fill="#fff" fontWeight="600">IMG</text>
+                  <text x="260" y="280" textAnchor="middle" fill="#d2afff" fontSize="8">MEDIA</text>
+                </g>
+
+                <g
+                  className={`graph-node ${selectedGraphNode === 'hash' ? 'active' : ''}`}
+                  onClick={() => setSelectedGraphNode('hash')}
+                >
+                  <circle cx="400" cy="180" r="32" fill="#102d24" stroke="var(--green)" strokeWidth="2.5" filter="url(#nodeGlow2)" />
+                  <text x="400" y="177" textAnchor="middle" fill="#fff" fontWeight="700">SHA-256</text>
+                  <text x="400" y="191" textAnchor="middle" fill="#6fe9b5" fontSize="9">CHECK</text>
+                </g>
+
+                <g
+                  className={`graph-node ${selectedGraphNode === 'review' ? 'active' : ''}`}
+                  onClick={() => setSelectedGraphNode('review')}
+                >
+                  <circle cx="520" cy="100" r="24" fill="#2d2212" stroke="var(--amber)" strokeWidth="2" />
+                  <text x="520" y="97" textAnchor="middle" fill="#fff" fontWeight="600">HUMAN</text>
+                  <text x="520" y="110" textAnchor="middle" fill="#ffd88b" fontSize="8">REVIEW</text>
+                </g>
+
+                <g
+                  className={`graph-node ${selectedGraphNode === 'hash' ? 'active' : ''}`}
+                  onClick={() => setSelectedGraphNode('hash')}
+                >
+                  <circle cx="520" cy="260" r="24" fill="#15243d" stroke="#5885ff" strokeWidth="2" />
+                  <text x="520" y="257" textAnchor="middle" fill="#fff" fontWeight="600">Ed25519</text>
+                  <text x="520" y="270" textAnchor="middle" fill="#93b2ff" fontSize="8">DOSSIER</text>
+                </g>
+              </svg>
+
+              {/* Inspector overlay for selected node */}
+              {selectedGraphNode && graphNodes[selectedGraphNode] && (
+                <div className="graph-inspector" style={{ marginTop: '16px' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: '700', color: '#fff' }}>
+                        {graphNodes[selectedGraphNode].title}
+                      </span>
+                      <span className="tag tag-live">{graphNodes[selectedGraphNode].status}</span>
+                    </div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                      {graphNodes[selectedGraphNode].details}
+                    </p>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <span style={{ fontSize: '10px', color: 'var(--muted)', display: 'block' }}>Node Identifier</span>
+                    <code style={{ fontSize: '11px', color: 'var(--cyan)', fontFamily: 'var(--font-mono)' }}>
+                      {graphNodes[selectedGraphNode].id}
+                    </code>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
       </main>
 
       {/* MODAL 1: Create Case Modal */}
