@@ -72,6 +72,7 @@ def create_app(*, dev_token: str | None = None) -> FastAPI:
             media_type="application/problem+json",
         )
 
+    @app.get("/api/health", include_in_schema=False)
     @app.get("/health", status_code=status.HTTP_200_OK)
     async def health_check() -> dict[str, str]:
         return {
@@ -82,7 +83,33 @@ def create_app(*, dev_token: str | None = None) -> FastAPI:
         }
 
     from .api import router as api_router
+    from fastapi import APIRouter
     app.include_router(api_router)
+
+    # Legacy frontend compatibility: support /api/* endpoints without /v1
+    legacy_router = APIRouter(prefix="/api", tags=["Legacy Compatibility"])
+    for route in api_router.routes:
+        if route.path.startswith("/api/v1/"):
+            subpath = route.path[len("/api/v1"):]
+            legacy_router.add_api_route(
+                subpath,
+                route.endpoint,
+                methods=route.methods,
+                response_model=getattr(route, "response_model", None),
+                dependencies=route.dependencies,
+                include_in_schema=False,
+            )
+    app.include_router(legacy_router)
+
+    @app.on_event("startup")
+    async def startup_event() -> None:
+        import sys
+        if "pytest" not in sys.modules and not os.getenv("PYTEST_CURRENT_TEST"):
+            try:
+                from .dev_server import _seed_demo_data
+                _seed_demo_data()
+            except Exception:
+                pass
 
     return app
 
